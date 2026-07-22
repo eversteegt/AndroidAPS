@@ -93,8 +93,15 @@ class SafetyPlugin @Inject constructor(
         return value
     }
 
+ /*   override fun isAdvancedFilteringEnabled(value: Constraint<Boolean>): Constraint<Boolean> {
+        val bgSource = activePlugin.activeBgSource
+        if (!bgSource.advancedFilteringSupported()) value.set(false, rh.gs(R.string.smbalwaysdisabled), this)
+        return value
+    } */
+
     override fun isAdvancedFilteringEnabled(value: Constraint<Boolean>): Constraint<Boolean> {
         val bgSource = activePlugin.activeBgSource
+        aapsLogger.debug("SAFETY checking instance ${System.identityHashCode(bgSource)} -> ${bgSource.advancedFilteringSupported()}")
         if (!bgSource.advancedFilteringSupported()) value.set(false, rh.gs(R.string.smbalwaysdisabled), this)
         return value
     }
