@@ -3,8 +3,16 @@ name: AAPS CI
 on:
   workflow_dispatch:
     inputs:
+      sourceType:
+        description: 'Build from'
+        required: true
+        default: 'own-branch'
+        type: choice
+        options:
+          - own-branch
+          - upstream-tag
       tagName:
-        description: 'Select AAPS Version'
+        description: 'Select AAPS Version (only used when Build from = upstream-tag)'
         required: true
         default: '3.4.2.3'
         type: choice
@@ -186,36 +194,50 @@ jobs:
           echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
           echo "✅ Access token obtained."
 
-      - name: Checkout source code at tag
+      - name: Checkout source code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Fetch selected tag from upstream
+        if: ${{ github.event.inputs.sourceType == 'upstream-tag' }}
         run: |
           git remote add upstream https://github.com/nightscout/AndroidAPS.git || true
           git fetch upstream refs/tags/${{ github.event.inputs.tagName }}:refs/tags/${{ github.event.inputs.tagName }}
           echo "✅ Tag ${{ github.event.inputs.tagName }} fetched from upstream."
 
-      - name: Determine JVM version from tag
-        run: |
-          # jdk-map.json must be read before switching to the upstream tag,
-          # as the upstream tag does not contain this file.
-          TAG="${{ github.event.inputs.tagName }}"
-          JAVA_VERSION=$(jq -r '.default' .github/jdk-map.json)
-          while IFS=$'\t' read -r pattern jdk; do
-            if [[ "$TAG" == $pattern ]]; then
-              JAVA_VERSION="$jdk"
-              break
-            fi
-          done < <(jq -r '.mappings[] | "\(.pattern)\t\(.jdk)"' .github/jdk-map.json)
-          echo "JAVA_VERSION=$JAVA_VERSION" >> $GITHUB_ENV
-          echo "ℹ️ Tag $TAG → JDK $JAVA_VERSION (from jdk-map.json)"
-
       - name: Switch to selected tag
+        if: ${{ github.event.inputs.sourceType == 'upstream-tag' }}
         run: |
           git checkout refs/tags/${{ github.event.inputs.tagName }}
           echo "✅ Checked out tag ${{ github.event.inputs.tagName }}"
+
+      - name: Confirm own-branch checkout
+        if: ${{ github.event.inputs.sourceType == 'own-branch' }}
+        run: |
+          echo "✅ Building from own branch: $(git rev-parse --abbrev-ref HEAD)"
+          echo "✅ HEAD commit: $(git rev-parse HEAD)"
+
+      - name: Determine JVM version
+        run: |
+          JAVA_VERSION=$(jq -r '.default' .github/jdk-map.json)
+          if [ "${{ github.event.inputs.sourceType }}" == "upstream-tag" ]; then
+            # jdk-map.json must be read before switching to the upstream tag,
+            # as the upstream tag does not contain this file. It's already
+            # been read above into JAVA_VERSION as a default; now refine it
+            # against the tag pattern map.
+            TAG="${{ github.event.inputs.tagName }}"
+            while IFS=$'\t' read -r pattern jdk; do
+              if [[ "$TAG" == $pattern ]]; then
+                JAVA_VERSION="$jdk"
+                break
+              fi
+            done < <(jq -r '.mappings[] | "\(.pattern)\t\(.jdk)"' .github/jdk-map.json)
+            echo "ℹ️ Tag $TAG → JDK $JAVA_VERSION (from jdk-map.json)"
+          else
+            echo "ℹ️ Using default JDK $JAVA_VERSION for own-branch build"
+          fi
+          echo "JAVA_VERSION=$JAVA_VERSION" >> $GITHUB_ENV
 
       - name: Set BUILD_VARIANT
         run: |
@@ -228,6 +250,14 @@ jobs:
           VERSION_SUFFIX=""
           if [[ "$VARIANT_FLAVOR" != "full" ]]; then VERSION_SUFFIX="$VARIANT_FLAVOR"; fi
           if [[ "$VARIANT_TYPE" == "debug" ]]; then VERSION_SUFFIX="$VERSION_SUFFIX-debug"; fi
+
+          # Tag own-branch builds clearly so they're never confused with upstream APKs.
+          if [ "${{ github.event.inputs.sourceType }}" == "own-branch" ]; then
+            BRANCH_SLUG=$(git rev-parse --abbrev-ref HEAD | tr '/' '-')
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            VERSION_SUFFIX="$VERSION_SUFFIX-${BRANCH_SLUG}-${SHORT_SHA}"
+          fi
+
           if [[ -n "$VERSION_SUFFIX" && "$VERSION_SUFFIX" != -* ]]; then VERSION_SUFFIX="-$VERSION_SUFFIX"; fi
           echo "VERSION_SUFFIX=$VERSION_SUFFIX" >> $GITHUB_ENV
 
